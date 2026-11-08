@@ -53,7 +53,7 @@ board(1, [
 2. Abra o terminal (ou a linha de comandos) no diretório onde o ficheiro `.pl` está localizado.
 3. Carregue o ficheiro Prolog:
    ```bash
-   swipl kakuro_2.pl
+   swipl kakuro.pl
    ```
 4. Execute a função de teste passando o ID do tabuleiro que deseja resolver. Por exemplo, para resolver o tabuleiro 1:
    ```prolog
