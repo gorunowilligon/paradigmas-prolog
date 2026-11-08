@@ -94,10 +94,9 @@ print_board([Row | Rest]) :-
 % Caso base: se a linha estiver vazia, termina.
 print_row([]).
 
-% Imprime a primeira célula da linha, adiciona um espaço de tabulação ('\t') para alinhamento e avança.
+% Imprime as linhas, com cada célula formatada
 print_row([Cell | Rest]) :-
-    write(Cell),         
-    write('\t'),         
+    format('~|~w~t~12+', [Cell]),      
     print_row(Rest).
 
 % --- Base de Dados de Tabuleiros ---
