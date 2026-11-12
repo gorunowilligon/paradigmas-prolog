@@ -20,75 +20,86 @@ extract_run([Cell | Rest], [Cell | Run], Remainder) :-
 % a extração pára. A sequência fica vazia e devolvemos o que sobrou (List -> Remainder).
 extract_run(List, [], List).
  
-% --- Percorre as linhas à procura de dicas de soma à direita ---
-% Caso base: se a linha estiver vazia, o processamento termina.
-process_row([]).
- 
-% Se a célula atual for uma variável (célula em branco), ignora-a e avança. 
-% Isto evita que o Prolog tente forçar uma dica de texto para dentro de uma célula onde devia estar um número.
-process_row([Cell | Rest]) :-
+% --- Recolhe as sequências ("runs") de uma linha ---
+% Percorre uma linha e devolve uma lista de pares Soma-Células, um por cada dica para a direita.
+% Aqui ainda NÃO se aplica nenhuma restrição: apenas se descobre a estrutura do tabuleiro.
+
+% Caso base: se a linha estiver vazia, não há mais sequências.
+row_runs([], []).
+
+% Se a célula atual for uma variável (célula em branco), ignora-a e avança.
+% Isto evita que o Prolog unifique uma célula branca com uma dica nas cláusulas seguintes.
+row_runs([Cell | Rest], Runs) :-
     var(Cell), !,
-    process_row(Rest).
- 
+    row_runs(Rest, Runs).
+
 % Se encontrar uma dica para a direita "r(Sum)":
-process_row([r(Sum) | Rest]) :- !,     % O '!' fixa esta cláusula: se a dica não puder ser satisfeita, o predicado falha em vez de cair na regra genérica lá em baixo, que ignoraria a dica.
-    extract_run(Rest, Run, Remainder), % Extrai todas as células em branco imediatamente a seguir.
-    apply_kakuro_rules(Sum, Run),      % Aplica as regras (domínio, diferença e soma) a essas células.
-    process_row(Remainder).            % Continua a varrer o que sobrou da linha.
- 
+row_runs([r(Sum) | Rest], [Sum-Run | Runs]) :- !,   % O '!' descarta as cláusulas seguintes: uma dica nunca é tratada como um bloco qualquer pela regra genérica lá em baixo.
+    extract_run(Rest, Run, Remainder),              % Extrai todas as células em branco imediatamente a seguir.
+    row_runs(Remainder, Runs).                      % Continua a varrer o que sobrou da linha.
+
 % Se encontrar uma dica dupla "c(Down, Right)":
-process_row([c(_, Sum) | Rest]) :- !,
-    extract_run(Rest, Run, Remainder), % Ignora o "Down" (o _) e usa apenas a soma "Right" (Sum).
-    apply_kakuro_rules(Sum, Run),
-    process_row(Remainder).
- 
+row_runs([c(_, Sum) | Rest], [Sum-Run | Runs]) :- !,
+    extract_run(Rest, Run, Remainder),              % Ignora o "Down" (o _) e usa apenas a soma "Right" (Sum).
+    row_runs(Remainder, Runs).
+
 % Se for qualquer outra coisa (por exemplo, um bloco preto 'b' ou uma dica para baixo 'd(N)'), ignora e avança.
-process_row([_ | Rest]) :-
-    process_row(Rest).
- 
- 
-% --- Percorre as colunas à procura de dicas de soma para baixo ---
-% Funciona com a mesma lógica do process_row, mas foca-se nas dicas verticais.
-process_col([]).
- 
-process_col([Cell | Rest]) :-
+row_runs([_ | Rest], Runs) :-
+    row_runs(Rest, Runs).
+
+% --- Recolhe as sequências de uma coluna ---
+% Funciona com a mesma lógica do row_runs, mas foca-se nas dicas verticais.
+col_runs([], []).
+
+col_runs([Cell | Rest], Runs) :-
     var(Cell), !,
-    process_col(Rest).
- 
+    col_runs(Rest, Runs).
+
 % Se encontrar uma dica para baixo "d(Sum)":
-process_col([d(Sum) | Rest]) :- !,
+col_runs([d(Sum) | Rest], [Sum-Run | Runs]) :- !,
     extract_run(Rest, Run, Remainder),
-    apply_kakuro_rules(Sum, Run),
-    process_col(Remainder).
- 
+    col_runs(Remainder, Runs).
+
 % Se encontrar uma dica dupla "c(Down, Right)":
-process_col([c(Sum, _) | Rest]) :- !,
-    extract_run(Rest, Run, Remainder), % Desta vez, usa apenas o "Down" (Sum) e ignora o "Right" (_).
-    apply_kakuro_rules(Sum, Run),
-    process_col(Remainder).
- 
-process_col([_ | Rest]) :-
-    process_col(Rest).
- 
+col_runs([c(Sum, _) | Rest], [Sum-Run | Runs]) :- !,
+    extract_run(Rest, Run, Remainder),              % Desta vez, usa apenas o "Down" (Sum) e ignora o "Right" (_).
+    col_runs(Remainder, Runs).
+
+col_runs([_ | Rest], Runs) :-
+    col_runs(Rest, Runs).
+
+% Recolhe todas as sequências do tabuleiro: primeiro as horizontais, depois as verticais.
+board_runs(Board, Runs) :-
+    maplist(row_runs, Board, H0), append(H0, H),
+    transpose(Board, Columns),                      % Transpõe a matriz: as colunas passam a ser linhas, por isso a mesma lógica de varrimento serve.
+    maplist(col_runs, Columns, V0), append(V0, V),
+    append(H, V, Runs).
+
 % --- O solucionador principal ---
+% A resolução é feita em duas fases: primeiro lê-se a estrutura (todas as sequências) e só depois
+% se aplicam as restrições. A ordem importa: extract_run reconhece uma célula branca por ela ainda
+% ser uma variável livre. Se as restrições fossem aplicadas à medida que o tabuleiro é lido, a
+% propagação do CLP(FD) podia fixar o valor de uma célula antes de a coluna dela ser lida; essa
+% célula deixava de parecer branca, a sequência ficava cortada e um tabuleiro válido era rejeitado.
 solve_kakuro(Board) :-
-    maplist(process_row, Board),      % 1. Aplica a função process_row a cada uma das linhas do tabuleiro.
-    transpose(Board, Columns),        % 2. Roda a matriz 90 graus (as colunas transformam-se em linhas perfeitamente legíveis para o Prolog).
-    maplist(process_col, Columns),    % 3. Aplica a função process_col a todas as novas "linhas" (as colunas originais).
-    components(Board, Groups),        % 4. Separa as células em grupos independentes (que não partilham nenhuma sequência).
+    board_runs(Board, Runs),          % 1. Recolhe TODAS as sequências (linhas e colunas) antes de aplicar qualquer restrição.
+    term_variables(Board, Cells),     % 2. Guarda as células brancas pela ordem em que aparecem no tabuleiro.
+    maplist(apply_run, Runs),         % 3. Só agora aplica as regras do Kakuro (domínio, diferença e soma) a cada sequência.
+    components(Runs, Cells, Groups),  % 4. Separa as células em grupos independentes (que não partilham nenhuma sequência).
     maplist(label_group, Groups).     % 5. Faz a pesquisa em cada grupo separadamente. Assim, num tabuleiro grande composto por várias zonas independentes, o retrocesso de uma zona nunca refaz o trabalho das outras.
+
+apply_run(Sum-Run) :- apply_kakuro_rules(Sum, Run).
 
 label_group(Vars) :- labeling([ffc], Vars).   % 'ffc': escolhe primeiro a variável com menor domínio (desempate: a que participa em mais restrições).
 
 % Agrupa as variáveis em componentes ligados: duas variáveis estão no mesmo grupo se
 % estiverem (direta ou indiretamente) ligadas por sequências.
-components(Board, Groups) :-
-    maplist(row_runs, Board, H0), append(H0, H),
-    transpose(Board, Cols),
-    maplist(col_runs, Cols, V0), append(V0, V),
-    append(H, V, All),
-    pairs_values(All, Runs),
-    foldl(merge_run, Runs, [], Groups).
+% Dentro de cada grupo as variáveis ficam pela ordem do tabuleiro (Cells): o 'ffc' usa essa ordem
+% como último critério de desempate, e ela dá uma pesquisa bem mais curta nos tabuleiros grandes.
+components(Runs, Cells, Groups) :-
+    pairs_values(Runs, Lists),
+    foldl(merge_run, Lists, [], Groups0),
+    maplist(board_order(Cells), Groups0, Groups).
 
 merge_run(Run, Groups0, [Merged | Others]) :-
     partition(shares_var(Run), Groups0, Touching, Others),
@@ -96,22 +107,16 @@ merge_run(Run, Groups0, [Merged | Others]) :-
     term_variables(Merged0, Merged).
 
 shares_var(Run, Group) :- member(A, Run), member(B, Group), A == B, !.
- 
+
+% Reordena as variáveis de um grupo pela ordem em que aparecem no tabuleiro.
+board_order(Cells, Group, Ordered) :- include(in_group(Group), Cells, Ordered).
+
+in_group(Group, Cell) :- member(V, Group), V == Cell, !.
+
 % --- Validação estrutural do tabuleiro ---
 % O solver acima NÃO verifica se o tabuleiro é um Kakuro legal. Uma célula branca que
 % só pertença a uma sequência (sem dica na outra direção) fica sem restrição e o tabuleiro
 % era dado como "resolvido". valid_board/1 rejeita esses casos antes de resolver.
-
-% Recolhe os "runs" horizontais (Dica-Soma, Células) de uma linha.
-row_runs([], []).
-row_runs([r(S) | T], [S-Run | Rs]) :- !, extract_run(T, Run, Rem), row_runs(Rem, Rs).
-row_runs([c(_, S) | T], [S-Run | Rs]) :- !, extract_run(T, Run, Rem), row_runs(Rem, Rs).
-row_runs([_ | T], Rs) :- row_runs(T, Rs).
-
-col_runs([], []).
-col_runs([d(S) | T], [S-Run | Rs]) :- !, extract_run(T, Run, Rem), col_runs(Rem, Rs).
-col_runs([c(S, _) | T], [S-Run | Rs]) :- !, extract_run(T, Run, Rem), col_runs(Rem, Rs).
-col_runs([_ | T], Rs) :- col_runs(T, Rs).
 
 % Soma mínima/máxima possível para N dígitos distintos de 1..9.
 run_ok(S-Run) :-
@@ -475,6 +480,11 @@ edge(15, 'valido na estrutura, mas somas contraditorias', sem_solucao, [
     [ r(3)   , _      , _      ],
     [ r(3)   , _      , _      ]
 ]).
+edge(16, 'valido: a propagacao fixa celulas antes de as colunas serem lidas', unica, [
+    [ b      , d(11)  , d(9)   ],
+    [ r(17)  , _      , _      ],
+    [ r(3)   , _      , _      ]
+]).
 
 % Classifica um tabuleiro: invalido | sem_solucao | unica | multiplas
 classify(Board, Result) :-
@@ -504,18 +514,38 @@ test_all :-
                format('--- tabuleiro ~w: ~3f s~n~n', [ID, T])
            )).
 
-% --- Função Auxiliar de Teste ---
-% Permite ao utilizador escrever test_board(1). ou test_board(2). no terminal.
-% Vai carregar a matriz correspondente a esse ID, tentar resolvê-la e imprimi-la no ecrã.
+% 7. FUNÇÃO DE TESTE COM PARADA IMEDIATA E MEDIÇÃO DE TEMPO DE CPU
 test_board(ID) :-
     board(ID, Board),
-    write('Resolvendo o tabuleiro '), write(ID), write('...'), nl,
-    (   \+ valid_board(Board)
-    ->  write('Tabuleiro INVALIDO (celula sem dica, run vazio/impossivel ou nao retangular).'), nl, fail
-    ;   findall(Board, limit(2, solve_kakuro(Board)), Sols),
-        (   Sols = []  -> write('Sem solucao.'), nl, fail
-        ;   Sols = [S] -> print_board(S)
-        ;   write('AVISO: mais de uma solucao (tabuleiro mal formado). Primeira:'), nl,
-            Sols = [S|_], print_board(S)
-        )
-    ).
+    write('A analisar as restricoes do tabuleiro '), write(ID), write('...'), nl,
+    
+    % Captura o tempo de CPU inicial (em segundos)
+    statistics(cputime, T0),
+    
+    % Procura no MÁXIMO 2 soluções e aborta imediatamente se achar a 2ª
+    findnsols(2, Board, solve_kakuro(Board), RawSolutions),
+    !, % Limpa o ponto de escolha deixado pelo findnsols
+    
+    % Captura o tempo de CPU final e calcula a duração exata
+    statistics(cputime, T1),
+    CPUTime is T1 - T0,
+    format('Tempo de CPU: ~4f segundos (~2f ms)~n', [CPUTime, CPUTime * 1000]),
+    
+    sort(RawSolutions, Solutions),
+    length(Solutions, Count),
+    handle_results(Count, Solutions).
+
+% Caso 0: Tabuleiro sem solução matemática ou com dimensões inválidas.
+handle_results(0, _) :-
+    write('ERRO: Tabuleiro invalido! Nao possui nenhuma solucao matematica (ou tem linhas desalinhadas).'), nl.
+
+% Caso 1: Tabuleiro válido com solução única.
+handle_results(1, [Solution]) :-
+    write('Sucesso! Foi encontrada UMA solucao unica e valida:'), nl, nl,
+    print_board(Solution).
+
+% Caso 2: Encontrou uma segunda possibilidade e abortou na hora!
+handle_results(2, [FirstSolution | _]) :-
+    write('ERRO: Tabuleiro invalido/ambiguo! Possui MAIS DE UMA solucao (busca abortada imediatamente na 2a possibilidade).'), nl,
+    write('Abaixo esta a primeira solucao encontrada antes da parada:'), nl, nl,
+    print_board(FirstSolution).
